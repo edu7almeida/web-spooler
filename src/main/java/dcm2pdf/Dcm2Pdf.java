@@ -13,10 +13,11 @@ import com.itextpdf.text.pdf.PdfWriter;
 
 import java.awt.image.BufferedImage;
 
-//import org.dcm4che.imageio.plugins.dcm;
+
 import javax.imageio.ImageIO;
 import javax.imageio.ImageReader;
 import javax.imageio.stream.ImageInputStream;
+import org.dcm4che3.imageio.plugins.dcm.DicomImageReadParam;
 
  
 
@@ -65,7 +66,7 @@ public class Dcm2Pdf {
 	if (reader == null)
             return false;
         
-        //DicomImageReadParam readParams = (DicomImageReadParam) reader.getDefaultReadParam();
+        DicomImageReadParam readParams = (DicomImageReadParam) reader.getDefaultReadParam();
         
         File dcmFile = new File(dcmName);
         
@@ -95,9 +96,6 @@ public class Dcm2Pdf {
         Image image = Image.getInstance(pdfcb, bufferImage, 1);
         
         document.add(image);
-        
-        /* add data to the document */
-        //document.add(new Paragraph("Hello World!"));
         
         /* close the document */
         document.close();

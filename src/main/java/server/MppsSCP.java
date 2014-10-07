@@ -73,14 +73,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * @author Gunter Zeilinger <gunterze@gmail.com>
+ * MppsSCP 
  *
  */
-
 public class MppsSCP {
 
-   private static ResourceBundle rb =
-            ResourceBundle.getBundle("org.dcm4che3.tool.mppsscp.messages");
+   private static final ResourceBundle rb =
+            ResourceBundle.getBundle("mppsscp.messages");
 
    private static final Logger LOG = LoggerFactory.getLogger(MppsSCP.class);
 
@@ -137,7 +136,9 @@ public class MppsSCP {
 
    public static void main(String[] args) {
        try {
+           
            CommandLine cl = parseComandLine(args);
+
            MppsSCP main = new MppsSCP();
            CLIUtils.configureBindServer(main.conn, main.ae, cl);
            CLIUtils.configure(main.conn, cl);
@@ -146,7 +147,7 @@ public class MppsSCP {
            configureIODs(main, cl);
            ExecutorService executorService = Executors.newCachedThreadPool();
            ScheduledExecutorService scheduledExecutorService = 
-                   Executors.newSingleThreadScheduledExecutor();
+           Executors.newSingleThreadScheduledExecutor();
            main.device.setScheduledExecutor(scheduledExecutorService);
            main.device.setExecutor(executorService);
            main.device.bindConnections();
@@ -159,6 +160,7 @@ public class MppsSCP {
            e.printStackTrace();
            System.exit(2);
        }
+       System.out.println("FIM");
    }
 
     private static CommandLine parseComandLine(String[] args) throws ParseException {
