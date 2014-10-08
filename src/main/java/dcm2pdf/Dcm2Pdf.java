@@ -34,13 +34,20 @@ import org.dcm4che3.imageio.plugins.dcm.DicomImageReadParam;
 public class Dcm2Pdf {
     
     /** Path to the resulting PDF file. */
+    
     public static final String PDF = "result.pdf";
+    
+    /** Path to the origin DCM file. */
+    
     public static final String DCM = "image.dcm";
+    
+    /** Factor of resize. */
+    
     public static final float FACTOR =  0.5f;
  
     /**
-     * Creates a PDF file: hello.pdf
-     * @param    args    no arguments needed
+     * Creates a PDF file
+     * @param    args    no arguments
      */
     
     public static void main(String[] args)
@@ -83,7 +90,7 @@ public class Dcm2Pdf {
         
         ImageInputStream inStream = ImageIO.createImageInputStream(dcmFile);
         reader.setInput(inStream);
-        inStream.close();
+        
         
         /* read the dcmfile to a buffer */
         
@@ -97,6 +104,7 @@ public class Dcm2Pdf {
         /* resize */
         
         BufferedImage bi = resize(bufferImage, width, height);
+        inStream.close();
         
         /* create a document */
         Document document = new Document();
