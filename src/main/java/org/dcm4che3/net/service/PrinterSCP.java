@@ -2,8 +2,12 @@
 package org.dcm4che3.net.service;
 
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.UnsupportedEncodingException;
+import java.nio.charset.Charset;
 import java.security.GeneralSecurityException;
+import java.util.Iterator;
 import java.util.Properties;
 import java.util.ResourceBundle;
 import java.util.concurrent.ExecutorService;
@@ -15,9 +19,12 @@ import org.apache.commons.cli.OptionBuilder;
 import org.apache.commons.cli.Options;
 import org.apache.commons.cli.ParseException;
 import org.dcm4che3.data.Attributes;
+import org.dcm4che3.data.Fragments;
 import org.dcm4che3.data.IOD;
+import org.dcm4che3.data.Sequence;
 import org.dcm4che3.data.Tag;
 import org.dcm4che3.data.UID;
+import org.dcm4che3.data.VR;
 import org.dcm4che3.data.ValidationResult;
 import org.dcm4che3.io.DicomInputStream;
 import org.dcm4che3.io.DicomOutputStream;
@@ -38,13 +45,14 @@ import org.slf4j.LoggerFactory;
  */
 
 public class PrinterSCP {
-   
+    private final String apEntityName;
     private static final ResourceBundle rb =
                             ResourceBundle.getBundle("mppsscp.messages");
     private static final Logger LOG = LoggerFactory.getLogger(PrinterSCP.class);
-    private final Device device = new Device("printerscp");
-    private final ApplicationEntity ae = new ApplicationEntity("PRINTER");
+    private final Device device;
+    private final ApplicationEntity ae;
     private final Connection conn = new Connection();
+    private final DicomServiceRegistry serviceRegistry;
     private File storageDir;
     private IOD printerNCreateIOD;
     private IOD printerNSetIOD;
@@ -56,13 +64,17 @@ public class PrinterSCP {
    
    
     public PrinterSCP(){
+       this.apEntityName = "PRINTER";
+       this.device = new Device("printerscp");
+       this.ae = new ApplicationEntity(apEntityName);
+       
        basicPrtrSCP = new BasicPrinterSCP(this);
        device.addConnection(conn);
        device.addApplicationEntity(ae);
       
        ae.setAssociationAcceptor(true);
        ae.addConnection(conn);
-       DicomServiceRegistry serviceRegistry = new DicomServiceRegistry();
+       this.serviceRegistry = new DicomServiceRegistry();
        serviceRegistry.addDicomService(new BasicCEchoSCP());
        serviceRegistry.addDicomService(basicPrtrSCP);
        ae.setDimseRQHandler(serviceRegistry);
@@ -120,8 +132,6 @@ public class PrinterSCP {
                     cl.getOptionValue("mpps-naction-iod", 
                             "resource:mpps-naction-iod.xml")));
         }
-            
-        
     }
     
     private static void configureTransferCapability(ApplicationEntity ae,
@@ -131,9 +141,7 @@ public class PrinterSCP {
                 null);
         
         for (String cuid : p.stringPropertyNames()) {
-            System.out.println("CUID: "+cuid);
             String ts = p.getProperty(cuid);
-            System.out.println("TS: "+ts);
             ae.addTransferCapability(
                     new TransferCapability(null,
                             CLIUtils.toUID(cuid),
@@ -210,54 +218,6 @@ public class PrinterSCP {
        this.printerNDeleteIOD = printerNDeleteIOD;
     }
     
-    public static void main2(String[] args) {
-        CommandLine cl = null;
-        try {
-            for (String s : args){
-                System.out.println(s);
-            }
-            cl = parseComandLine(args);
-        } catch (ParseException ex) {
-            java.util.logging.Logger.getLogger(PrinterSCP.class.getName()).log(Level.SEVERE, null, ex);
-        }
-        PrinterSCP main = new PrinterSCP();
-        ExecutorService executorService = Executors.newCachedThreadPool();
-        ScheduledExecutorService scheduledExecutorService = 
-        Executors.newSingleThreadScheduledExecutor();
-        
-        try {
-            CLIUtils.configureBindServer(main.conn, main.ae, cl);
-        } catch (ParseException ex) {
-            java.util.logging.Logger.getLogger(PrinterSCP.class.getName()).log(Level.SEVERE, null, ex);
-        }
-        try {
-            CLIUtils.configure(main.conn, cl);
-        } catch (ParseException ex) {
-            java.util.logging.Logger.getLogger(PrinterSCP.class.getName()).log(Level.SEVERE, null, ex);
-        } catch (IOException ex) {
-            java.util.logging.Logger.getLogger(PrinterSCP.class.getName()).log(Level.SEVERE, null, ex);
-        }
-        try {
-            configureTransferCapability(main.ae, cl);
-            //configureStorageDirectory(main, cl);
-            configureIODs(main, cl);
-        } catch (IOException ex) {
-            java.util.logging.Logger.getLogger(PrinterSCP.class.getName()).log(Level.SEVERE, null, ex);
-        }
-
-        
-        main.device.setScheduledExecutor(scheduledExecutorService);
-        main.device.setExecutor(executorService);
-        try {
-            main.device.bindConnections();
-            
-        } catch (IOException ex) {
-            java.util.logging.Logger.getLogger(PrinterSCP.class.getName()).log(Level.SEVERE, null, ex);
-        } catch (GeneralSecurityException ex) {
-            java.util.logging.Logger.getLogger(PrinterSCP.class.getName()).log(Level.SEVERE, null, ex);
-        }
-        System.out.println("Service is waiting for clients...");
-    }
     
     /**
      *  Main Function.
@@ -282,11 +242,11 @@ public class PrinterSCP {
             printer.device.setExecutor(executorService);
             printer.device.bindConnections();
         } catch (ParseException e) {
-            System.err.println("mppsscp: " + e.getMessage());
+            System.err.println("printerscp: " + e.getMessage());
             System.err.println(rb.getString("try"));
             System.exit(2);
         } catch (Exception e) {
-            System.err.println("mppsscp: " + e.getMessage());
+            System.err.println("printerscp: " + e.getMessage());
             e.printStackTrace();
             System.exit(2);
         }
@@ -301,23 +261,22 @@ public class PrinterSCP {
      * 
      * @param as association for witch the instance will be retrieved
      * @param rq requested meta-data atributes
+     * @param rqAtrbts
      * @param rsp response data atributes
      * @return response of the printer with the information requested
      * @throws org.dcm4che3.net.service.DicomServiceException 
      */
     
-    public Attributes get(Association as, Attributes rq, Attributes rsp)
+    public Attributes get(Association as, Attributes rq, Attributes rqAtrbts, Attributes rsp)
             throws DicomServiceException {
         
         System.out.println("Entrei no GET");//
         if (this.printerNGetIOD != null) {
-            ValidationResult result = rq.validate(this.printerNGetIOD);
+            ValidationResult result = rqAtrbts.validate(this.printerNGetIOD);
             System.out.println("É diferente de NULL");//
             if (!result.isValid())
-                throw DicomServiceException.valueOf(result, rq);
+                throw DicomServiceException.valueOf(result, rqAtrbts);
         }
-        if (storageDir == null)
-            return null;
         
         String cuid = rq.getString(Tag.RequestedSOPClassUID);
         String iuid = rq.getString(Tag.RequestedSOPInstanceUID);
@@ -325,34 +284,9 @@ public class PrinterSCP {
         System.out.println("CUID: " + cuid);
         System.out.println("IUID: " + iuid);
         
-        File file;
-        file = new File(storageDir, iuid);
-        if (new File(storageDir, iuid).exists()){
-            if (file.delete()){
-                System.out.println("The file "+file.getName()+" is deleted.");
-                file = new File(storageDir, iuid);
-            }else{
-                System.out.println("Deleted operation of "+file.getName()+" file is failed.");
-            throw new DicomServiceException(Status.NoSuchObjectInstance).
-                setUID(Tag.RequestedSOPClassUID, iuid);
-            }
-        }
-        LOG.info("{}: M-WRITE {}", as, file);
-
-        /* write printer sop class instance to a dicom stream */
-        DicomOutputStream out = null;
-        try {
-            out = new DicomOutputStream(file);            
-            out.writeDataset( Attributes.createFileMetaInformation(iuid, cuid, UID.ExplicitVRLittleEndian), rq);
-        } catch (IOException e) {
-            LOG.warn(as + ": Failed to create the stream dicom:", e);
-            throw new DicomServiceException(Status.ProcessingFailure, e);
-        } finally {
-            SafeClose.close(out);
-        }
-        return rq;
+        
+        return rqAtrbts;
     }
-    
     
     /**
      * Process of the N-CREATE-RQ messages. Is used to create instances for the
@@ -368,46 +302,123 @@ public class PrinterSCP {
      */
     
     public Attributes create(Association as, Attributes rq, Attributes rqAttrs, Attributes rsp)
-           throws DicomServiceException {
-       System.out.println("create AS: " + as.toString());
-       System.out.println("create RQ: " + rq.toString());
-       //System.out.println("create rqATTRS: " + rqAttrs.toString());
-       System.out.println("create RSP: " + rsp.toString());
-        
-       if (printerNCreateIOD != null) {
-           ValidationResult result = rq.validate(printerNCreateIOD);
-           if (!result.isValid())
-               throw DicomServiceException.valueOf(result, rq);
+           throws DicomServiceException, UnsupportedEncodingException {
+        System.out.println("create AS: " + as.toString());
+        System.out.println("create RQ: " + rq.toString());
+        //System.out.println("create rqATTRS: " + rqAttrs.toString());
+        System.out.println("create RSP: " + rsp.toString());
+
+        if (printerNCreateIOD != null) {
+            ValidationResult result = rqAttrs.validate(printerNCreateIOD);
+            if (!result.isValid())
+                throw DicomServiceException.valueOf(result, rqAttrs);
+        }
+        if (storageDir == null)
+            return null;
+        String cuid = rq.getString(Tag.AffectedSOPClassUID);
+        String iuid = rq.getString(Tag.AffectedSOPInstanceUID);
+
+        System.out.println("CREATE");
+        System.out.println(cuid);
+        System.out.println(iuid);
+
+        Attributes rspAttrts = null;
+        DicomOutputStream out = null;
+        File file;
+        switch (cuid) {
+
+            /* Presentation LUT SOP Class */
+            case UID.PresentationLUTSOPClass:
+                file = new File(storageDir, iuid);
+                if (file.exists())
+                    throw new DicomServiceException(Status.DuplicateSOPinstance).
+                            setUID(Tag.AffectedSOPInstanceUID, iuid);
+                out = null;
+                LOG.info("{}: M-WRITE {}", as, file);
+                try {
+                    out = new DicomOutputStream(file);
+                    out.writeDataset(
+                            Attributes.createFileMetaInformation(iuid, cuid, UID.ExplicitVRLittleEndian), rqAttrs);
+
+                } catch (IOException e) {
+                    LOG.warn(as + ": Failed to store Presentation LUT SOP Instance:", e);
+                    throw new DicomServiceException(Status.ProcessingFailure, e);
+                } finally {
+                    SafeClose.close(out);
+                }   rspAttrts = rqAttrs;
+                break;
+
+            /* Basic Film Session SOP Class */
+            case UID.BasicFilmSessionSOPClass:
+                
+                rspAttrts = new Attributes();
+                rspAttrts.setValue(Tag.NumberOfCopies, VR.IS, (String) "1");
+                rspAttrts.setValue(Tag.PrintPriority, VR.CS, (String) "MED");
+                rspAttrts.setValue(Tag.MediumType, VR.CS, (String) "PAPER");
+                rspAttrts.setValue(Tag.FilmDestination, VR.CS, (String) "MAGAZINE");
+                rspAttrts.setValue(Tag.FilmSessionLabel, VR.LO, (String) "Print Job for \"DCMSTATE\" created");
+                rspAttrts.setValue(Tag.OwnerID, VR.SH, (String) "DCMSTATE");
+                break;
+
+            /* Basic Film Box SOP Class */
+            case UID.BasicFilmBoxSOPClass:
+                file = new File(storageDir, iuid);
+                if (file.exists())
+                    throw new DicomServiceException(Status.DuplicateSOPinstance).
+                            setUID(Tag.AffectedSOPInstanceUID, iuid);
+                out = null;
+                LOG.info("{}: M-WRITE {}", as, file);
+                try {
+                    out = new DicomOutputStream(file);
+                    out.writeDataset(
+                            Attributes.createFileMetaInformation(iuid, cuid, UID.ExplicitVRLittleEndian), rqAttrs);
+
+                } catch (IOException e) {
+                    LOG.warn(as + ": Failed to store Presentation LUT SOP Instance:", e);
+                    throw new DicomServiceException(Status.ProcessingFailure, e);
+                } finally {
+                    SafeClose.close(out);
+                }
+                rspAttrts = new Attributes();
+                rspAttrts.setValue(Tag.ImageDisplayFormat, VR.ST, (String) "STANDARD\\1,1");
+                rspAttrts.setValue(Tag.FilmOrientation, VR.CS, (String) "PORTRAIT");
+                rspAttrts.setValue(Tag.FilmSizeID, VR.CS, (String) "8INX10IN");
+                rspAttrts.setValue(Tag.MagnificationType, VR.CS, (String) "REPLICATE");
+                rspAttrts.setValue(Tag.SmoothingType, VR.CS, (String) "NONE");
+                rspAttrts.setValue(Tag.BorderDensity, VR.CS, (String) "150");
+                rspAttrts.setValue(Tag.EmptyImageDensity, VR.CS, (String) "20");          
+                rspAttrts.setValue(Tag.MinDensity, VR.US, "20".getBytes("US-ASCII"));
+                rspAttrts.setValue(Tag.MaxDensity, VR.US, "320".getBytes("US-ASCII"));
+                rspAttrts.setValue(Tag.Trim, VR.CS, (String) "NO");
+                rspAttrts.setValue(Tag.ConfigurationInformation, VR.ST, (String) "US-ASCII");
+                rspAttrts.setValue(Tag.Illumination, VR.US, "2000".getBytes("US-ASCII"));
+                rspAttrts.setValue(Tag.ReflectedAmbientLight, VR.US, new String("10").getBytes("US-ASCII"));
+                           
+                Sequence seq = rspAttrts.newSequence(Tag.ReferencedFilmSessionSequence, 1);
+                Attributes seqAtr = new Attributes();
+                seqAtr.setValue(Tag.ReferencedSOPClassUID, VR.UI, UID.BasicFilmSessionSOPClass.getBytes("US-ASCII"));
+                seqAtr.setValue(Tag.ReferencedSOPInstanceUID, VR.UI, iuid.getBytes("US-ASCII")); 
+                seq.add(0, seqAtr); 
+                
+                seq = rspAttrts.newSequence(Tag.ReferencedImageBoxSequence, 1);
+                seqAtr = new Attributes();
+                seqAtr.setValue(Tag.ReferencedSOPClassUID, VR.UI, UID.BasicGrayscaleImageBoxSOPClass.getBytes("US-ASCII"));
+                seqAtr.setValue(Tag.ReferencedSOPInstanceUID, VR.UI, iuid.getBytes("US-ASCII")); 
+                seq.add(0, seqAtr);
+                
+                rspAttrts.setValue(Tag.RequestedResolutionID, VR.CS, (String) "STANDARD");
+                
+                seq = rspAttrts.newSequence(Tag.ReferencedPresentationLUTSequence, 1);
+                seqAtr = new Attributes();
+                seqAtr.setValue(Tag.ReferencedSOPClassUID, VR.UI, UID.PresentationLUTSOPClass.getBytes("US-ASCII"));
+                seqAtr.setValue(Tag.ReferencedSOPInstanceUID, VR.UI, iuid.getBytes("US-ASCII")); 
+                seq.add(0, seqAtr);
+
+                break;
+            default: throw new AssertionError(UID.nameOf(cuid));
        }
-       if (storageDir == null)
-           return null;
-       String cuid = rq.getString(Tag.AffectedSOPClassUID);
-       String iuid = rq.getString(Tag.AffectedSOPInstanceUID);
-       
-       System.out.println("CREATE");
-       System.out.println(cuid);
-       System.out.println(iuid);
-       
-       File file = new File(storageDir, iuid);
-       if (file.exists())
-           throw new DicomServiceException(Status.DuplicateSOPinstance).
-               setUID(Tag.AffectedSOPInstanceUID, iuid);
-       
-       DicomOutputStream out = null;
-       LOG.info("{}: M-WRITE {}", as, file);
-       try {
-           out = new DicomOutputStream(file);
-           out.writeDataset(
-                    Attributes.createFileMetaInformation(iuid, cuid, UID.ExplicitVRLittleEndian), rq);
-       
-       } catch (IOException e) {
-           LOG.warn(as + ": Failed to store MPPS:", e);
-           throw new DicomServiceException(Status.ProcessingFailure, e);
-       } finally {
-           SafeClose.close(out);
-       }
-       System.out.println("end create rqATTRS: " + rq.toString());
-       return rq;
+       System.out.println("end create rqATTRS: " + rspAttrts.toString());
+       return rspAttrts;
     }
     
     
@@ -423,7 +434,7 @@ public class PrinterSCP {
      */
     
     public Attributes set(Association as, Attributes rq, Attributes rqAttrs, Attributes rsp)
-            throws DicomServiceException    {
+            throws DicomServiceException, IOException    {
         if (this.printerNSetIOD != null) {
             ValidationResult result = rqAttrs.validate(printerNSetIOD);
             if (!result.isValid())
@@ -433,37 +444,68 @@ public class PrinterSCP {
             return null;
         String cuid = rq.getString(Tag.RequestedSOPClassUID);
         String iuid = rq.getString(Tag.RequestedSOPInstanceUID);
+        System.out.println("set: "+ cuid.toString());
+        System.out.println("set: "+ iuid.toString());
         File file = new File(storageDir, iuid);
-        if (!file.exists())
+        if (!(file.exists()))
             throw new DicomServiceException(Status.NoSuchObjectInstance).
                 setUID(Tag.AffectedSOPInstanceUID, iuid);
         LOG.info("{}: M-UPDATE {}", as, file);
         Attributes data;
         DicomInputStream in = null;
+        DicomOutputStream outStream= null;
+        
         try {
             in = new DicomInputStream(file);
             data = in.readDataset(-1, -1);
         } catch (IOException e) {
-            LOG.warn(as + ": Failed to read MPPS:", e);
+            LOG.warn(as + ": Failed to read :", e);
             throw new DicomServiceException(Status.ProcessingFailure, e);
         } finally {
             SafeClose.close(in);
         }
-
+        File outFile = new File(storageDir,"outImage.dcm");
+        outStream = new DicomOutputStream(outFile);
+        
+        
         data.addAll(rqAttrs);
         DicomOutputStream out = null;
         try {
-            out = new DicomOutputStream(file);
+  
+            Sequence bresult = data.getSequence(Tag.BasicGrayscaleImageSequence);
+            Iterator i = bresult.iterator();
+            while(i.hasNext())
+            {
+                int count;
+                Attributes ii = (Attributes) i.next();
+                System.out.print(i.toString());
+                if(ii.getBytes(Tag.PixelData) != null){
+                    count = ii.getBytes(Tag.PixelData).length;
+                    
+                    System.out.println("Count: " +count);
+                    
+                    FileOutputStream fos = new FileOutputStream("imageRaw");
+                    fos.write(ii.getBytes(Tag.PixelData));
+                    fos.close();
+                }
+                
+            }
+            
+            
+            /*FileOutputStream fos = new FileOutputStream("imageRaw");
+            fos.write(bresult);
+            fos.close();*/
+            out = new DicomOutputStream(outFile);
             out.writeDataset(
                     Attributes.createFileMetaInformation(iuid, cuid, UID.ExplicitVRLittleEndian),
                     data);
         } catch (IOException e) {
-            LOG.warn(as + ": Failed to update MPPS:", e);
+            LOG.warn(as + ": Failed to update :", e);
             throw new DicomServiceException(Status.ProcessingFailure, e);
         } finally {
             SafeClose.close(out);
         }
-        return rq;
+        return rqAttrs;
     }
     
     
@@ -489,13 +531,13 @@ public class PrinterSCP {
             in = new DicomInputStream(file);
             data = in.readDataset(-1, -1);
         } catch (IOException e) {
-            LOG.warn(as + ": Failed to read MPPS:", e);
+            LOG.warn(as + ": Failed to read FBSC:", e);
             throw new DicomServiceException(Status.ProcessingFailure, e);
         } finally {
             SafeClose.close(in);
         }
-        if (!"IN PROGRESS".equals(data.getString(Tag.PerformedProcedureStepStatus)))
-            BasicMPPSSCP.mayNoLongerBeUpdated();
+        /*if (!"IN PROGRESS".equals(data.getString(Tag.PerformedProcedureStepStatus)))
+            BasicMPPSSCP.mayNoLongerBeUpdated();*/
 
         data.addAll(rqAttrs);
         DicomOutputStream out = null;
